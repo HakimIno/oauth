@@ -1,20 +1,27 @@
 defmodule AuthApiWeb.Plugs.VerifyScopes do
   import Plug.Conn
-  import Phoenix.Controller
+  alias AuthApi.OAuth
 
-  def init(scope), do: scope
+  def init(opts), do: opts
 
   def call(conn, required_scope) do
     with ["Bearer " <> token] <- get_req_header(conn, "authorization"),
-         {:ok, access_token} <- AuthApi.OAuth.verify_access_token(token),
-         {:ok, true} <- AuthApi.OAuth.verify_token_scope(access_token, required_scope) do
-      assign(conn, :current_token, access_token)
+         {:ok, token_record} <- OAuth.get_token(token),
+         true <- has_required_scope?(token_record, required_scope) do
+      conn |> assign(:current_token, token_record)
     else
       _ ->
         conn
         |> put_status(:unauthorized)
-        |> json(%{error: "invalid_scope"})
+        |> Phoenix.Controller.json(%{error: "invalid_token"})
         |> halt()
+    end
+  end
+
+  defp has_required_scope?(token, required_scope) do
+    case token.scopes do
+      nil -> false
+      scopes -> String.contains?(scopes, required_scope)
     end
   end
 end

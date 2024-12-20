@@ -164,6 +164,7 @@
             updateStatus("Successfully received access token!");
             localStorage.setItem("access_token", data.access_token);
             localStorage.setItem("refresh_token", data.refresh_token);
+            console.log("Stored access token:", data.access_token);
           } else {
             updateStatus(`Error getting token: ${data.error}`, true);
           }
@@ -222,29 +223,48 @@
         }
 
         const endpoints = [
-          { url: '/api/test/public', method: 'GET' },
-          { url: '/api/test/read', method: 'GET' },
-          { url: '/api/test/write', method: 'POST' }
+          { 
+            url: 'http://localhost:4000/api/test/public', 
+            method: 'GET',
+            scope: 'public'
+          },
+          { 
+            url: 'http://localhost:4000/api/test/read', 
+            method: 'GET',
+            scope: 'read'
+          },
+          { 
+            url: 'http://localhost:4000/api/test/write', 
+            method: 'POST',
+            scope: 'write'
+          }
         ];
 
+        updateStatus('Testing endpoints with token: ' + token.substring(0, 10) + '...');
         const results = {};
         
         for (const endpoint of endpoints) {
           try {
+            console.log(`Testing ${endpoint.url} with token:`, token);
             const response = await fetch(endpoint.url, {
               method: endpoint.method,
               headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': 'Bearer ' + token,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
               }
             });
+            
             const data = await response.json();
             results[endpoint.url] = {
               status: response.status,
+              scope: endpoint.scope,
               data: data
             };
           } catch (error) {
             results[endpoint.url] = {
-              error: error.message
+              error: error.message,
+              scope: endpoint.scope
             };
           }
         }

@@ -178,8 +178,9 @@ defmodule AuthApi.OAuth do
     end
   end
 
-  defp token_not_expired?(token) do
-    DateTime.compare(token.expires_at, DateTime.utc_now()) == :gt
+  def token_not_expired?(token) do
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+    NaiveDateTime.compare(token.expires_at, now) == :gt
   end
 
   def list_revoked_tokens(opts \\ []) do
@@ -233,41 +234,40 @@ defmodule AuthApi.OAuth do
 
   def get_token(token) do
     case Repo.get_by(AccessToken, token: token) do
-      nil -> {:error, :token_not_found}
-      token_record -> {:ok, token_record}
+      nil ->
+        {:error, :token_not_found}
+      token_record ->
+        if token_not_expired?(token_record) && !token_revoked?(token_record.token) do
+          {:ok, token_record}
+        else
+          {:error, :token_invalid}
+        end
     end
   end
 
-  defp create_token_pair(application, scopes) do
-    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-    access_token_expires = NaiveDateTime.add(now, 3600, :second)
-    refresh_token_expires = NaiveDateTime.add(now, 30 * 24 * 60 * 60, :second)
-
-    access_token_attrs = %{
-      token: generate_token(),
-      application_id: application.id,
-      expires_at: access_token_expires,
-      scope_list: scopes
-    }
-
-    Ecto.Multi.new()
-    |> Ecto.Multi.insert(:access_token, AccessToken.changeset(%AccessToken{}, access_token_attrs))
-    |> Ecto.Multi.insert(:refresh_token, fn %{access_token: access_token} ->
-      RefreshToken.changeset(%RefreshToken{}, %{
+  def create_token_pair(application, scopes) do
+    Repo.transaction(fn ->
+      access_token = Repo.insert!(%AccessToken{
         token: generate_token(),
-        # ใช้ access_token_id แทน application_id
-        access_token_id: access_token.id,
-        expires_at: refresh_token_expires
+        application_id: application.id,
+        expires_at: token_expiration(),
+        scopes: scopes
       })
-    end)
-    |> Repo.transaction()
-    |> case do
-      {:ok, %{access_token: access_token, refresh_token: refresh_token}} ->
-        {:ok, {access_token, refresh_token}}
 
-      {:error, _, changeset, _} ->
-        {:error, changeset}
-    end
+      refresh_token = Repo.insert!(%RefreshToken{
+        token: generate_token(),
+        access_token_id: access_token.id,
+        expires_at: refresh_token_expiration()
+      })
+
+      %{
+        access_token: access_token.token,
+        refresh_token: refresh_token.token,
+        expires_in: 3600,
+        token_type: "Bearer",
+        scope: scopes
+      }
+    end)
   end
 
   def refresh_access_token(refresh_token) do
@@ -574,5 +574,17 @@ defmodule AuthApi.OAuth do
       nil -> false
       _ -> true
     end
+  end
+
+  defp token_expiration do
+    NaiveDateTime.utc_now()
+    |> NaiveDateTime.add(3600, :second)
+    |> NaiveDateTime.truncate(:second)
+  end
+
+  defp refresh_token_expiration do
+    NaiveDateTime.utc_now()
+    |> NaiveDateTime.add(30 * 24 * 3600, :second)
+    |> NaiveDateTime.truncate(:second)
   end
 end

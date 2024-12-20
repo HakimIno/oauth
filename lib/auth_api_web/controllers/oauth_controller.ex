@@ -32,12 +32,14 @@ defmodule AuthApiWeb.OAuthController do
   end
 
   def token(conn, %{"grant_type" => "authorization_code"} = params) do
-    case OAuth.exchange_code_for_token(params) do
-      {:ok, token_response} ->
-        json(conn, token_response)
-
-      {:error, error} ->
-        render_error(conn, error)
+    with {:ok, application} <- OAuth.get_application_by_client_id(params["client_id"]),
+         {:ok, tokens} <- OAuth.create_token_pair(application, "read write") do
+      json(conn, tokens)
+    else
+      _ ->
+        conn
+        |> put_status(:unauthorized)
+        |> json(%{error: "invalid_request"})
     end
   end
 
