@@ -74,14 +74,37 @@ defmodule AuthApi.OAuth do
     end
   end
 
-  def store_code_data(code, code_challenge) do
-    data = %{
-      "code_challenge" => code_challenge,
-      "expires_at" => DateTime.utc_now() |> DateTime.add(600, :second)
+  def store_code_data(code, code_challenge, scopes) do
+    code_data = %{
+      code_challenge: code_challenge,
+      scopes: scopes,
+      expires_at: DateTime.utc_now() |> DateTime.add(600, :second)
     }
 
-    true = :ets.insert(@auth_code_table, {code, data})
+    # Log for debugging
+    Logger.debug("Storing code data: #{inspect(code_data)}")
+
+    true = :ets.insert(@auth_code_table, {code, code_data})
     {:ok, code}
+  end
+
+  def get_code_data(code) do
+    case :ets.lookup(@auth_code_table, code) do
+      [{^code, data}] ->
+        # Log for debugging
+        Logger.debug("Retrieved code data: #{inspect(data)}")
+
+        if DateTime.compare(data.expires_at, DateTime.utc_now()) == :gt do
+          {:ok, data}
+        else
+          :ets.delete(@auth_code_table, code)
+          {:error, :code_expired}
+        end
+
+      [] ->
+        Logger.debug("No code data found for code: #{code}")
+        {:error, :invalid_code}
+    end
   end
 
   defp get_stored_code_data(code) do
@@ -246,12 +269,15 @@ defmodule AuthApi.OAuth do
   end
 
   def create_token_pair(application, scopes) do
+    # แปลง list ของ scopes เป็น string โดยใช้ space คั่น
+    scopes_string = Enum.join(scopes, " ")
+
     Repo.transaction(fn ->
       access_token = Repo.insert!(%AccessToken{
         token: generate_token(),
         application_id: application.id,
         expires_at: token_expiration(),
-        scopes: scopes
+        scopes: scopes_string  # ใช้ string แทน list
       })
 
       refresh_token = Repo.insert!(%RefreshToken{
@@ -265,7 +291,7 @@ defmodule AuthApi.OAuth do
         refresh_token: refresh_token.token,
         expires_in: 3600,
         token_type: "Bearer",
-        scope: scopes
+        scope: scopes_string
       }
     end)
   end

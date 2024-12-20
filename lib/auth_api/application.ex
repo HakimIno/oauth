@@ -7,6 +7,9 @@ defmodule AuthApi.Application do
 
   @impl true
   def start(_type, _args) do
+    # Initialize ETS table for auth codes
+    AuthApi.OAuth.init_storage()
+
     children = [
       AuthApi.Repo,
       AuthApiWeb.Telemetry,
@@ -21,9 +24,6 @@ defmodule AuthApi.Application do
       # Add cache supervision
       {Cachex, name: :oauth_cache}
     ]
-
-    # Initialize ETS table for auth codes
-    AuthApi.OAuth.init_storage()
 
     opts = [strategy: :one_for_one, name: AuthApi.Supervisor]
     Supervisor.start_link(children, opts)

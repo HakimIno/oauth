@@ -13,7 +13,7 @@ defmodule AuthApi.OAuth.AccessToken do
 
   def changeset(token, attrs) do
     token
-    |> cast(attrs, [:token, :expires_at, :application_id, :scopes])
+    |> cast(attrs, [:token, :expires_at, :scopes, :application_id])
     |> validate_required([:token, :expires_at, :application_id])
   end
 end

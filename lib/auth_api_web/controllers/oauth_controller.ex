@@ -1,5 +1,6 @@
 defmodule AuthApiWeb.OAuthController do
   use AuthApiWeb, :controller
+  use Bitwise
   alias AuthApi.OAuth
 
   def authorize(conn, params) do
@@ -33,7 +34,9 @@ defmodule AuthApiWeb.OAuthController do
 
   def token(conn, %{"grant_type" => "authorization_code"} = params) do
     with {:ok, application} <- OAuth.get_application_by_client_id(params["client_id"]),
-         {:ok, tokens} <- OAuth.create_token_pair(application, "read write") do
+         {:ok, code_data} <- OAuth.get_code_data(params["code"]),
+         {:ok, _} <- verify_pkce(conn, params),
+         {:ok, tokens} <- OAuth.create_token_pair(application, code_data.scopes) do
       json(conn, tokens)
     else
       _ ->
@@ -64,16 +67,23 @@ defmodule AuthApiWeb.OAuthController do
 
   defp validate_pkce_params(_), do: {:error, "invalid_pkce_params"}
 
-  defp verify_pkce(conn, %{"code_verifier" => verifier}) do
-    stored_challenge = get_session(conn, :code_challenge)
-    calculated = calculate_challenge(verifier)
+  defp verify_pkce(_conn, %{"code_verifier" => verifier, "code" => code}) do
+    case OAuth.get_code_data(code) do
+      {:ok, code_data} ->
+        stored_challenge = code_data.code_challenge
+        calculated = calculate_challenge(verifier)
 
-    if stored_challenge && secure_compare(stored_challenge, calculated) do
-      {:ok, verifier}
-    else
-      {:error, "invalid_code_verifier"}
+        if stored_challenge && constant_time_compare(stored_challenge, calculated) do
+          {:ok, verifier}
+        else
+          {:error, "invalid_code_verifier"}
+        end
+      _ ->
+        {:error, "invalid_code"}
     end
   end
+
+  defp verify_pkce(_, _), do: {:error, "invalid_pkce_params"}
 
   # State Validation
   defp validate_state_param(%{"state" => state}) when is_binary(state) do
@@ -112,6 +122,9 @@ defmodule AuthApiWeb.OAuthController do
   defp calculate_challenge(verifier) do
     :crypto.hash(:sha256, verifier)
     |> Base.url_encode64(padding: false)
+    |> String.replace("+", "-")
+    |> String.replace("/", "_")
+    |> String.replace("=", "")
   end
 
   defp secure_compare(a, b) when is_binary(a) and is_binary(b) do
@@ -183,21 +196,26 @@ defmodule AuthApiWeb.OAuthController do
       # Generate authorization code
       code = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
 
-      # Store code data with PKCE challenge
-      OAuth.store_code_data(code, params["code_challenge"])
+      # Get approved scopes
+      scopes = (params["scope"] || "") |> String.split(" ")
+
+      # Store code data with PKCE challenge and scopes
+      OAuth.store_code_data(code, get_session(conn, "code_challenge"), scopes)
 
       # Get state from session
       state = get_session(conn, "state") || ""
 
+      # Clear session data
+      conn =
+        conn
+        |> delete_session("state")
+        |> delete_session("code_challenge")
+        |> delete_session("redirect_uri")
+
       # Build redirect URI
       redirect_uri = "#{params["redirect_uri"]}?code=#{code}&state=#{state}"
 
-      # Clear session data
-      conn
-      |> delete_session("state")
-      |> delete_session("code_challenge")
-      |> delete_session("redirect_uri")
-      |> redirect(external: redirect_uri)
+      redirect(conn, external: redirect_uri)
     else
       _ ->
         conn
@@ -237,4 +255,20 @@ defmodule AuthApiWeb.OAuthController do
       expires_at: DateTime.utc_now() |> DateTime.add(600, :second)
     })
   end
+
+  defp constant_time_compare(left, right) when is_binary(left) and is_binary(right) do
+    if byte_size(left) == byte_size(right) do
+      constant_time_compare(left, right, 0) == 0
+    else
+      false
+    end
+  end
+
+  defp constant_time_compare(<<>>, <<>>, acc), do: acc
+
+  defp constant_time_compare(<<x, left::binary>>, <<y, right::binary>>, acc) do
+    constant_time_compare(left, right, acc ||| Bitwise.bxor(x, y))
+  end
+
+  defp constant_time_compare(_, _, _), do: 1
 end
