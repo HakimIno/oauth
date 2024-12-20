@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>OAuth Test Client</title>
+    <style>
+      .container {
+        padding: 20px;
+      }
+      .debug {
+        background: #f5f5f5;
+        padding: 10px;
+        border-radius: 4px;
+        margin-top: 20px;
+      }
+      .status {
+        margin: 10px 0;
+        padding: 10px;
+        border-radius: 4px;
+      }
+      .success {
+        background: #e8f5e9;
+      }
+      .error {
+        background: #ffebee;
+      }
+      .button-container {
+        margin: 20px 0;
+      }
+      button {
+        margin-right: 10px;
+      }
+      .scope-select {
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>OAuth Test Client</h1>
+      <div id="status" class="status"></div>
+      
+      <div class="scope-select">
+        <label>Select Scopes:</label><br>
+        <input type="checkbox" id="scope_read" value="read" checked> Read
+        <input type="checkbox" id="scope_write" value="write"> Write
+        <input type="checkbox" id="scope_profile" value="profile"> Profile
+        <input type="checkbox" id="scope_email" value="email"> Email
+      </div>
+
+      <div class="button-container">
+        <button onclick="startAuth()">Login with OAuth</button>
+        <button onclick="refreshAccessToken()">Refresh Token</button>
+        <button onclick="testEndpoints()">Test Endpoints</button>
+      </div>
+
+      <pre id="debug" class="debug"></pre>
+    </div>
+
+    <script>
+      async function generateCodeChallenge(codeVerifier) {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(codeVerifier);
+        const digest = await crypto.subtle.digest("SHA-256", data);
+        return btoa(String.fromCharCode(...new Uint8Array(digest)))
+          .replace(/\+/g, "-")
+          .replace(/\//g, "_")
+          .replace(/=/g, "");
+      }
+
+      function generateRandomString(length) {
+        const possible =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        let text = "";
+        for (let i = 0; i < length; i++) {
+          text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
+      }
+
+      async function startAuth() {
+        try {
+          // Get selected scopes
+          const selectedScopes = Array.from(document.querySelectorAll('input[type="checkbox"]:checked'))
+            .map(cb => cb.value)
+            .join(' ');
+
+          // Generate PKCE values
+          const codeVerifier = generateRandomString(64); // Make sure it's long enough
+          const codeChallenge = await generateCodeChallenge(codeVerifier);
+          const state = generateRandomString(32);
+
+          // Store PKCE values
+          localStorage.setItem('code_verifier', codeVerifier);
+          localStorage.setItem('state', state);
+
+          // Build authorization URL
+          const params = new URLSearchParams({
+            client_id: 'RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o',
+            response_type: 'code',
+            redirect_uri: window.location.href,
+            code_challenge_method: 'S256',
+            code_challenge: codeChallenge,
+            state: state,
+            scope: selectedScopes
+          });
+
+          // Redirect to authorization endpoint
+          window.location = `/oauth/authorize?${params.toString()}`;
+        } catch (error) {
+          updateStatus(`Error: ${error.message}`, true);
+          updateDebug({ error: error.message });
+        }
+      }
+
+      function updateStatus(message, isError = false) {
+        const statusDiv = document.getElementById("status");
+        statusDiv.textContent = message;
+        statusDiv.className = `status ${isError ? "error" : "success"}`;
+      }
+
+      function updateDebug(data) {
+        document.getElementById("debug").textContent = JSON.stringify(
+          data,
+          null,
+          2
+        );
+      }
+
+      async function handleCallback() {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        const state = params.get("state");
+        const savedState = localStorage.getItem("state");
+
+        if (!code) return;
+
+        if (state !== savedState) {
+          updateStatus("State mismatch. Possible CSRF attack!", true);
+          return;
+        }
+
+        updateStatus("Received authorization code. Exchanging for token...");
+        updateDebug({ code, state });
+
+        try {
+          const response = await fetch("http://localhost:4000/oauth/token", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              grant_type: "authorization_code",
+              code: code,
+              client_id: "RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o",
+              client_secret: "72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma",
+              code_verifier: localStorage.getItem("code_verifier"),
+            }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            updateStatus("Successfully received access token!");
+            localStorage.setItem("access_token", data.access_token);
+            localStorage.setItem("refresh_token", data.refresh_token);
+          } else {
+            updateStatus(`Error getting token: ${data.error}`, true);
+          }
+
+          updateDebug(data);
+        } catch (error) {
+          updateStatus(`Error: ${error.message}`, true);
+          updateDebug({ error: error.message });
+        }
+      }
+
+      async function refreshAccessToken() {
+        const refreshToken = localStorage.getItem("refresh_token");
+        if (!refreshToken) {
+          updateStatus("No refresh token found!", true);
+          return;
+        }
+
+        try {
+          const response = await fetch("http://localhost:4000/oauth/token", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              grant_type: "refresh_token",
+              refresh_token: refreshToken,
+              client_id: "RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o",
+              client_secret: "72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma"
+            }),
+          });
+
+          const data = await response.json();
+
+          if (response.ok) {
+            updateStatus("Successfully refreshed access token!");
+            localStorage.setItem("access_token", data.access_token);
+            localStorage.setItem("refresh_token", data.refresh_token);
+          } else {
+            updateStatus(`Error refreshing token: ${data.error}`, true);
+          }
+
+          updateDebug(data);
+        } catch (error) {
+          updateStatus(`Error: ${error.message}`, true);
+          updateDebug({ error: error.message });
+        }
+      }
+
+      async function testEndpoints() {
+        const token = localStorage.getItem('access_token');
+        if (!token) {
+          updateStatus('No access token found', true);
+          return;
+        }
+
+        const endpoints = [
+          { url: '/api/test/public', method: 'GET' },
+          { url: '/api/test/read', method: 'GET' },
+          { url: '/api/test/write', method: 'POST' }
+        ];
+
+        const results = {};
+        
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint.url, {
+              method: endpoint.method,
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            });
+            const data = await response.json();
+            results[endpoint.url] = {
+              status: response.status,
+              data: data
+            };
+          } catch (error) {
+            results[endpoint.url] = {
+              error: error.message
+            };
+          }
+        }
+
+        updateDebug(results);
+      }
+
+      // Check if we're on the callback
+      if (window.location.search.includes("code=")) {
+        handleCallback();
+      }
+    </script>
+  </body>
+</html>

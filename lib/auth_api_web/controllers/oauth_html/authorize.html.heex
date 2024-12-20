@@ -1,0 +1,56 @@
+<div class="auth-container">
+  <h2>Authorize Application</h2>
+  <p>Application "<%= @application.name %>" is requesting access to your account.</p>
+  
+  <%= form_for @conn, ~p"/oauth/authorize", fn f -> %>
+    <%= hidden_input f, :client_id, value: @application.client_id %>
+    <%= hidden_input f, :state, value: @state %>
+    <%= hidden_input f, :code_challenge, value: get_session(@conn, "code_challenge") %>
+    
+    <div class="scopes">
+      <h3>Requested Permissions:</h3>
+      <ul>
+        <%= for scope <- @scopes do %>
+          <li><%= scope %></li>
+        <% end %>
+      </ul>
+    </div>
+
+    <div class="actions">
+      <%= submit "Authorize", class: "btn btn-primary" %>
+      <%= link "Cancel", to: "/", class: "btn btn-secondary" %>
+    </div>
+  <% end %>
+</div>
+
+<style>
+  .auth-container {
+    max-width: 600px;
+    margin: 2rem auto;
+    padding: 2rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+  }
+  .app-info {
+    margin: 1rem 0;
+  }
+  .buttons {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+  }
+  .button {
+    padding: 0.5rem 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .primary {
+    background: #4CAF50;
+    color: white;
+  }
+  .secondary {
+    background: #f44336;
+    color: white;
+  }
+</style>
