@@ -297,45 +297,45 @@ defmodule AuthApi.OAuth do
   end
 
   def refresh_access_token(refresh_token) do
-    with {:ok, stored_token} <- get_refresh_token(refresh_token),
-         false <- is_expired?(stored_token.expires_at),
-         false <- is_revoked?(refresh_token) do
+    case get_refresh_token(refresh_token) do
+      {:ok, token} ->
+        if NaiveDateTime.compare(token.expires_at, NaiveDateTime.utc_now()) == :gt do
+          # Get old access token
+          old_access_token = Repo.get(AccessToken, token.access_token_id)
 
-      # ดึง application_id จาก access token ที่เชื่อมโยงกับ refresh token
-      access_token = Repo.get!(AccessToken, stored_token.access_token_id)
+          case Repo.transaction(fn ->
+            # Create new access token
+            new_access_token = Repo.insert!(%AccessToken{
+              token: generate_token(),
+              application_id: old_access_token.application_id,
+              expires_at: token_expiration(),
+              scopes: old_access_token.scopes
+            })
 
-      now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
-      access_token_expires = NaiveDateTime.add(now, 3600, :second)
-      refresh_token_expires = NaiveDateTime.add(now, 30 * 24 * 60 * 60, :second)
+            # Create new refresh token
+            new_refresh_token = Repo.insert!(%RefreshToken{
+              token: generate_token(),
+              access_token_id: new_access_token.id,
+              expires_at: refresh_token_expiration()
+            })
 
-      Ecto.Multi.new()
-      |> Ecto.Multi.insert(:access_token, %AccessToken{
-        token: generate_token(),
-        application_id: access_token.application_id,  # ใช้ application_id จาก access token เดิม
-        expires_at: access_token_expires
-      })
-      |> Ecto.Multi.insert(:refresh_token, fn %{access_token: new_access_token} ->
-        %RefreshToken{
-          token: generate_token(),
-          access_token_id: new_access_token.id,
-          expires_at: refresh_token_expires
-        }
-      end)
-      |> Repo.transaction()
-      |> case do
-        {:ok, %{access_token: new_access_token, refresh_token: new_refresh_token}} ->
-          {:ok, %{
-            token: new_access_token.token,
-            refresh_token: new_refresh_token.token,
-            expires_in: 3600
-          }}
-        {:error, _, _changeset, _} ->
-          {:error, "token_generation_failed"}
-      end
-    else
-      {:error, :not_found} -> {:error, "invalid_grant"}
-      true -> {:error, "invalid_grant"}  # Token expired or revoked
-      _ -> {:error, "server_error"}
+            # Return token data directly (without {:ok, ...})
+            %{
+              access_token: new_access_token.token,
+              refresh_token: new_refresh_token.token,
+              expires_in: 3600,
+              token_type: "Bearer",
+              scope: old_access_token.scopes
+            }
+          end) do
+            {:ok, result} -> {:ok, result}
+            {:error, _} -> {:error, :token_generation_failed}
+          end
+        else
+          {:error, :token_expired}
+        end
+      _ ->
+        {:error, :invalid_refresh_token}
     end
   end
 
@@ -354,36 +354,20 @@ defmodule AuthApi.OAuth do
 
   # Private function to handle token deletion
   defp delete_old_tokens(refresh_token) do
-    # Load access token
-    access_token =
-      refresh_token.access_token_id
-      |> get_access_token_by_id()
-      |> case do
-        {:ok, token} -> token
-        _ -> nil
-      end
+    # Delete old refresh token
+    Repo.delete_all(from rt in RefreshToken, where: rt.id == ^refresh_token.id)
 
-    if access_token do
-      # Delete in correct order to maintain referential integrity
-      Repo.transaction(fn ->
-        # 1. Delete access token scopes
-        Repo.delete_all(
-          from ats in "oauth_access_token_scopes",
-            where: ats.access_token_id == ^access_token.id
-        )
+    # Delete old access token and its scopes
+    if refresh_token.access_token_id do
+      Repo.delete_all(
+        from ats in "oauth_access_token_scopes",
+          where: ats.access_token_id == ^refresh_token.access_token_id
+      )
 
-        # 2. Delete refresh tokens
-        Repo.delete_all(
-          from rt in RefreshToken,
-            where: rt.access_token_id == ^access_token.id
-        )
-
-        # 3. Delete access token
-        Repo.delete_all(
-          from at in AccessToken,
-            where: at.id == ^access_token.id
-        )
-      end)
+      Repo.delete_all(
+        from at in AccessToken,
+          where: at.id == ^refresh_token.access_token_id
+      )
     end
   end
 
@@ -613,4 +597,30 @@ defmodule AuthApi.OAuth do
     |> NaiveDateTime.add(30 * 24 * 3600, :second)
     |> NaiveDateTime.truncate(:second)
   end
+
+  # Helper functions
+  defp token_expired?(expires_at) do
+    NaiveDateTime.compare(expires_at, NaiveDateTime.utc_now()) == :lt
+  end
+
+  # defp token_revoked?(token) do
+  #   case Repo.get_by(RevokedToken, token: token) do
+  #     nil -> false
+  #     _ -> true
+  #   end
+  # end
+
+  # defp get_refresh_token(token) do
+  #   case Repo.get_by(RefreshToken, token: token) |> Repo.preload(:access_token) do
+  #     nil -> {:error, :not_found}
+  #     token -> {:ok, token}
+  #   end
+  # end
+
+  # defp get_access_token_by_id(id) do
+  #   case Repo.get(AccessToken, id) do
+  #     nil -> {:error, :not_found}
+  #     token -> {:ok, token}
+  #   end
+  # end
 end

@@ -1,6 +1,6 @@
 defmodule AuthApiWeb.OAuthController do
   use AuthApiWeb, :controller
-  use Bitwise
+  import Bitwise
   alias AuthApi.OAuth
 
   def authorize(conn, params) do

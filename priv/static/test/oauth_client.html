@@ -127,88 +127,83 @@
       }
 
       async function handleCallback() {
-        const params = new URLSearchParams(window.location.search);
-        const code = params.get("code");
-        const state = params.get("state");
-        const savedState = localStorage.getItem("state");
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get('code');
+        const state = urlParams.get('state');
 
-        if (!code) return;
+        if (code) {
+          try {
+            const response = await fetch('http://localhost:4000/oauth/token', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                grant_type: 'authorization_code',
+                code: code,
+                code_verifier: localStorage.getItem('code_verifier'),
+                client_id: 'RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o',
+                client_secret: '72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma'
+              }),
+            });
 
-        if (state !== savedState) {
-          updateStatus("State mismatch. Possible CSRF attack!", true);
-          return;
-        }
-
-        updateStatus("Received authorization code. Exchanging for token...");
-        updateDebug({ code, state });
-
-        try {
-          const response = await fetch("http://localhost:4000/oauth/token", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
-            },
-            body: JSON.stringify({
-              grant_type: "authorization_code",
-              code: code,
-              client_id: "RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o",
-              client_secret: "72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma",
-              code_verifier: localStorage.getItem("code_verifier"),
-            }),
-          });
-
-          const data = await response.json();
-
-          if (response.ok) {
-            updateStatus("Successfully received access token!");
-            localStorage.setItem("access_token", data.access_token);
-            localStorage.setItem("refresh_token", data.refresh_token);
-            console.log("Stored access token:", data.access_token);
-          } else {
-            updateStatus(`Error getting token: ${data.error}`, true);
+            const data = await response.json();
+            if (response.ok) {
+              // บันทึก tokens
+              localStorage.setItem('access_token', data.access_token);
+              localStorage.setItem('refresh_token', data.refresh_token);
+              updateStatus('Successfully obtained tokens!');
+              updateDebug(data);
+            } else {
+              updateStatus(`Error: ${data.error}`, true);
+              updateDebug(data);
+            }
+          } catch (error) {
+            updateStatus(`Error: ${error.message}`, true);
+            updateDebug({ error: error.message });
           }
-
-          updateDebug(data);
-        } catch (error) {
-          updateStatus(`Error: ${error.message}`, true);
-          updateDebug({ error: error.message });
         }
       }
 
       async function refreshAccessToken() {
-        const refreshToken = localStorage.getItem("refresh_token");
-        if (!refreshToken) {
-          updateStatus("No refresh token found!", true);
-          return;
-        }
-
         try {
-          const response = await fetch("http://localhost:4000/oauth/token", {
-            method: "POST",
+          const refreshToken = localStorage.getItem('refresh_token');
+          if (!refreshToken) {
+            updateStatus('No refresh token found', true);
+            return;
+          }
+
+          const response = await fetch('http://localhost:4000/oauth/token', {
+            method: 'POST',
             headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json",
+              'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-              grant_type: "refresh_token",
+              grant_type: 'refresh_token',
               refresh_token: refreshToken,
-              client_id: "RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o",
-              client_secret: "72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma"
+              client_id: 'RFrMmO9SiD2KWcMAflfxq2p4mTLMDC3o',
+              client_secret: '72WhQyXx__Yenkhp7xXFu_5LCQhrlwzovdzAEOpo-9RMqNJmec9igvvBxPktJIma'
             }),
           });
 
           const data = await response.json();
+          console.log('Refresh token response:', data); // เพิ่ม logging
 
           if (response.ok) {
-            updateStatus("Successfully refreshed access token!");
-            localStorage.setItem("access_token", data.access_token);
-            localStorage.setItem("refresh_token", data.refresh_token);
+            // บันทึก tokens ใหม่
+            localStorage.setItem('access_token', data.access_token);
+            if (data.refresh_token) {
+              localStorage.setItem('refresh_token', data.refresh_token);
+            }
+            updateStatus('Successfully refreshed access token!');
+            updateDebug(data);
+            
+            // ทดสอบ endpoints ทันทีหลังจากได้ token ใหม่
+            await testEndpoints();
           } else {
             updateStatus(`Error refreshing token: ${data.error}`, true);
+            updateDebug(data);
           }
-
-          updateDebug(data);
         } catch (error) {
           updateStatus(`Error: ${error.message}`, true);
           updateDebug({ error: error.message });
@@ -217,11 +212,15 @@
 
       async function testEndpoints() {
         const token = localStorage.getItem('access_token');
+        console.log('Current access token:', token); // เพิ่ม logging
+
         if (!token) {
           updateStatus('No access token found', true);
           return;
         }
 
+        updateStatus('Testing endpoints with token: ' + token.substring(0, 10) + '...');
+        
         const endpoints = [
           { 
             url: 'http://localhost:4000/api/test/public', 
@@ -240,16 +239,14 @@
           }
         ];
 
-        updateStatus('Testing endpoints with token: ' + token.substring(0, 10) + '...');
         const results = {};
         
         for (const endpoint of endpoints) {
           try {
-            console.log(`Testing ${endpoint.url} with token:`, token);
             const response = await fetch(endpoint.url, {
               method: endpoint.method,
               headers: {
-                'Authorization': 'Bearer ' + token,
+                'Authorization': `Bearer ${token}`,
                 'Accept': 'application/json',
                 'Content-Type': 'application/json'
               }
