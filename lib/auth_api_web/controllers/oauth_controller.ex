@@ -18,7 +18,7 @@ defmodule AuthApiWeb.OAuthController do
       |> put_session("redirect_uri", params["redirect_uri"])
       |> assign(:scopes, scopes)
       |> assign(:application, application)
-      |> render("authorize.html")
+      |> render("authorize.html", layout: {AuthApiWeb.Layouts, :root})
     else
       {:error, error_code} ->
         conn

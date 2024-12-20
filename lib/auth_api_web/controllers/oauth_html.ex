@@ -17,13 +17,26 @@ defmodule AuthApiWeb.OAuthHTML do
 
     ~H"""
     <div class="auth-container">
-      <h2>Authorize Application</h2>
+      <div class="auth-card">
+        <div class="app-logo">
+          <!-- แทนที่ด้วย logo จริงของแอพ -->
+          <svg class="logo-placeholder" viewBox="0 0 24 24">
+            <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+          </svg>
+        </div>
 
-      <div class="app-info">
-        <p>The application "<%= @application.name %>" would like to access your account.</p>
-      </div>
+        <h1 class="title">Sign in</h1>
+        <p class="subtitle">to continue to <strong><%= @application.name %></strong></p>
 
-      <div class="actions">
+        <div class="auth-content">
+          <p class="permission-text">This application will be able to:</p>
+          <ul class="permission-list">
+            <%= for scope <- @scopes do %>
+              <li><%= scope %></li>
+            <% end %>
+          </ul>
+        </div>
+
         <form action="/oauth/authorize" method="post" id="auth-form">
           <input type="hidden" name="_csrf_token" value={get_csrf_token()}>
           <input type="hidden" name="client_id" value={@application.client_id}>
@@ -33,45 +46,19 @@ defmodule AuthApiWeb.OAuthHTML do
           <input type="hidden" name="scope" value={Enum.join(@scopes, " ")}>
 
           <div class="buttons">
-            <button type="submit" name="action" value="authorize" class="button primary">
-              Authorize
+            <button type="submit" name="action" value="deny" class="btn btn-cancel">
+              Cancel
             </button>
-            <button type="submit" name="action" value="deny" class="button secondary">
-              Deny
+            <button type="submit" name="action" value="authorize" class="btn btn-continue">
+              Continue
             </button>
           </div>
         </form>
-      </div>
 
-      <style>
-        .auth-container {
-          max-width: 600px;
-          margin: 2rem auto;
-          padding: 2rem;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-        }
-        .app-info { margin: 1rem 0; }
-        .buttons {
-          display: flex;
-          gap: 1rem;
-          margin-top: 1rem;
-        }
-        .button {
-          padding: 0.5rem 1rem;
-          border: none;
-          border-radius: 4px;
-          cursor: pointer;
-        }
-        .primary {
-          background: #4CAF50;
-          color: white;
-        }
-        .secondary {
-          background: #f44336;
-          color: white;
-        }
-      </style>
+        <footer class="auth-footer">
+          <p>This will redirect to <a href="#" class="link"><%= @application.redirect_uri %></a></p>
+        </footer>
+      </div>
     </div>
     """
   end

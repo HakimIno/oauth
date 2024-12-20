@@ -1,13 +1,16 @@
 defmodule AuthApiWeb.Router do
   use AuthApiWeb, :router
+  import Phoenix.LiveView.Router
 
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
-    plug :fetch_flash
-    plug :protect_from_forgery
+    plug :fetch_live_flash
     plug :put_root_layout, html: {AuthApiWeb.Layouts, :root}
-    plug :put_secure_browser_headers
+    plug :protect_from_forgery
+    plug :put_secure_browser_headers, %{
+      "content-security-policy" => "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; worker-src 'self' blob:; style-src-elem 'self' 'unsafe-inline' https://fonts.googleapis.com"
+    }
   end
 
   pipeline :api do

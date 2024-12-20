@@ -49,7 +49,8 @@ defmodule AuthApi.MixProject do
       {:guardian, "~> 2.0"},
       {:redix, "~> 1.1"},
       {:cors_plug, "~> 3.0"},
-      {:cachex, "~> 3.6"}
+      {:cachex, "~> 3.6"},
+      {:esbuild, "~> 0.7", runtime: Mix.env() == :dev}
     ]
   end
 
@@ -61,7 +62,8 @@ defmodule AuthApi.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
+      "assets.deploy": ["esbuild default --minify", "phx.digest"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
