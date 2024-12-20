@@ -270,24 +270,46 @@ defmodule AuthApi.OAuth do
     end
   end
 
-  def refresh_access_token(refresh_token, client_id, client_secret) do
-    with {:ok, application} <- get_application_by_client_id(client_id),
-         true <- application.client_secret == client_secret,
-         {:ok, refresh_token_record} <- get_refresh_token(refresh_token),
-         {:ok, old_access_token} <- get_access_token_by_id(refresh_token_record.access_token_id),
-         {:ok, scopes} <- get_token_scopes(old_access_token) do
-      Repo.transaction(fn ->
-        with {:ok, _} <- delete_old_tokens(refresh_token_record),
-             {:ok, {access_token, refresh_token}} <- create_token_pair(application, scopes) do
-          {:ok, {access_token, refresh_token}}
-        else
-          error -> Repo.rollback(error)
-        end
+  def refresh_access_token(refresh_token) do
+    with {:ok, stored_token} <- get_refresh_token(refresh_token),
+         false <- is_expired?(stored_token.expires_at),
+         false <- is_revoked?(refresh_token) do
+
+      # ดึง application_id จาก access token ที่เชื่อมโยงกับ refresh token
+      access_token = Repo.get!(AccessToken, stored_token.access_token_id)
+
+      now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+      access_token_expires = NaiveDateTime.add(now, 3600, :second)
+      refresh_token_expires = NaiveDateTime.add(now, 30 * 24 * 60 * 60, :second)
+
+      Ecto.Multi.new()
+      |> Ecto.Multi.insert(:access_token, %AccessToken{
+        token: generate_token(),
+        application_id: access_token.application_id,  # ใช้ application_id จาก access token เดิม
+        expires_at: access_token_expires
+      })
+      |> Ecto.Multi.insert(:refresh_token, fn %{access_token: new_access_token} ->
+        %RefreshToken{
+          token: generate_token(),
+          access_token_id: new_access_token.id,
+          expires_at: refresh_token_expires
+        }
       end)
+      |> Repo.transaction()
+      |> case do
+        {:ok, %{access_token: new_access_token, refresh_token: new_refresh_token}} ->
+          {:ok, %{
+            token: new_access_token.token,
+            refresh_token: new_refresh_token.token,
+            expires_in: 3600
+          }}
+        {:error, _, _changeset, _} ->
+          {:error, "token_generation_failed"}
+      end
     else
-      false -> {:error, :invalid_client}
-      nil -> {:error, :invalid_refresh_token}
-      error -> error
+      {:error, :not_found} -> {:error, "invalid_grant"}
+      true -> {:error, "invalid_grant"}  # Token expired or revoked
+      _ -> {:error, "server_error"}
     end
   end
 
@@ -531,7 +553,26 @@ defmodule AuthApi.OAuth do
   def get_refresh_token(token) do
     case Repo.get_by(RefreshToken, token: token) do
       nil -> {:error, :not_found}
-      refresh_token -> {:ok, refresh_token}
+      token -> {:ok, token}
+    end
+  end
+
+  # Helper functions
+  def get_refresh_token(token) do
+    case Repo.get_by(RefreshToken, token: token) |> Repo.preload(:access_token) do
+      nil -> {:error, :not_found}
+      token -> {:ok, token}
+    end
+  end
+
+  defp is_expired?(expires_at) do
+    NaiveDateTime.compare(expires_at, NaiveDateTime.utc_now()) == :lt
+  end
+
+  defp is_revoked?(token) do
+    case Repo.get_by(RevokedToken, token: token) do
+      nil -> false
+      _ -> true
     end
   end
 end

@@ -43,8 +43,10 @@ defmodule AuthApiWeb.OAuthController do
 
   def token(conn, %{"grant_type" => "refresh_token"} = params) do
     case OAuth.refresh_access_token(params["refresh_token"]) do
-      {:ok, token} -> render_token_response(conn, token)
-      {:error, error_code} -> render_error(conn, error_code)
+      {:ok, token_response} ->
+        json(conn, token_response)
+      {:error, error} ->
+        render_error(conn, error)
     end
   end
 
@@ -120,15 +122,14 @@ defmodule AuthApiWeb.OAuthController do
 
   defp secure_compare(_, _), do: false
 
-  defp render_token_response(conn, token) do
-    conn
-    |> put_status(:ok)
-    |> json(%{
-      access_token: token.token,
-      token_type: "bearer",
-      expires_in: 3600,
-      refresh_token: token.refresh_token
-    })
+  defp render_token_response(conn, token_data) do
+    response = %{
+      access_token: token_data.access_token,
+      token_type: "Bearer",
+      expires_in: token_data.expires_in,
+      refresh_token: token_data.refresh_token
+    }
+    json(conn, response)
   end
 
   defp render_error(conn, error_code) do
